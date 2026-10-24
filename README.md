@@ -1,32 +1,35 @@
-# Scout Deportes
+# Scout Deportes · estilo Windrawwin
 
-Analizador de **fútbol con datos reales** (resultados openfootball).
-
-HTML + Python. Sin API key.
-
-## Qué incluye
-
-- Premier League, La Liga, Bundesliga, Serie A, Ligue 1 (temporada en el JSON público)
-- Tabla, goles a favor/contra, forma (últimos 5), casa/fuera
-- Comparador local vs visitante + H2H de la temporada
-- Lectura automática simple de desequilibrios
-
-## Qué NO incluye (aún)
-
-Corners, tiros, tarjetas, atajadas y stats de jugador detalladas: no vienen en openfootball.
-Eso requiere otra API (p. ej. API-Football free con clave).
+Datos **reales** de resultados + **modelo Poisson** (probabilidades 1X2) + **RSS** de noticias.
 
 ## Cómo usar
 
 ```bash
-cd scout-deportes
 python3 servidor.py
 ```
 
 Abre http://127.0.0.1:8780
 
-## Fuente
+## Qué hace el algoritmo
 
-[openfootball/football.json](https://github.com/openfootball/football.json) — resultados públicos reales.
+1. Calcula goles esperados (λ) con ataque/defensa y forma (casa/fuera).
+2. Distribución de Poisson → P(1), P(X), P(2), Over/Under 2.5, marcadores más probables.
+3. Cuotas implícitas ≈ 1/probabilidad.
 
-Uso educativo. No es predicción ni consejo de apuestas.
+**No determina el ganador real.** Es un modelo estadístico educativo.
+
+## Fuentes
+
+| Dato | Fuente |
+|------|--------|
+| Resultados / tabla / forma | openfootball (GitHub) |
+| Probabilidades | modelo Python local |
+| Noticias | RSS BBC + Guardian |
+
+## Limitaciones
+
+- Sin corners, tiros, tarjetas (openfootball no los trae).
+- RSS no rellena stats de partido; solo titulares.
+- Para stats avanzadas hace falta API-Football (clave free).
+
+Uso educativo. No es consejo de apuestas.
