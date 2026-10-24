@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scout Deportes · Análisis real</title>
+<style>
+:root{--bg:#0b0f14;--card:#141b24;--border:#243041;--text:#e8eef6;--muted:#8b9cb3;--green:#22c55e;--red:#ef4444;--accent:#06b6d4;--orange:#f59e0b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Segoe UI,system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{padding:14px 18px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,#0f172a,#1e293b);display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+header h1{font-size:1.15rem}
+.badge{font-size:.68rem;background:#14532d;color:#4ade80;padding:2px 8px;border-radius:999px;font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+select,button{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:.87rem}
+button.primary{background:var(--accent);color:#0b0f14;font-weight:700;border:none;cursor:pointer}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
+.card h2{font-size:.95rem;margin-bottom:8px}
+.muted{color:var(--muted);font-size:.8rem}
+.stat{display:flex;justify-content:space-between;padding:4px 0;font-size:.88rem;border-bottom:1px solid #1a2332}
+.stat:last-child{border:none}
+.form span{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;border-radius:4px;font-size:.7rem;font-weight:700;margin-right:2px}
+.form .W{background:#14532d;color:#4ade80}.form .D{background:#3f3f46;color:#d4d4d8}.form .L{background:#450a0a;color:#f87171}
+.bar-wrap{margin:8px 0}
+.bar-label{display:flex;justify-content:space-between;font-size:.75rem;color:var(--muted);margin-bottom:3px}
+.bar{height:10px;background:#1a2332;border-radius:6px;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.bar .a{background:var(--accent)}.bar .b{background:var(--orange)}
+.h2h{font-size:.82rem}
+.notes{margin-top:10px;font-size:.86rem;line-height:1.45}
+.notes li{margin:4px 0 4px 16px}
+.warn{background:#422006;border:1px solid #f59e0b;color:#fde68a;padding:10px;border-radius:8px;font-size:.8rem;margin-top:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚽ Scout Deportes <span class="badge">DATOS REALES</span></h1>
+  <span class="muted" id="fuente">openfootball</span>
+</header>
+<main>
+  <div class="controls">
+    <select id="liga"></select>
+    <select id="local"></select>
+    <select id="visitante"></select>
+    <button class="primary" onclick="comparar()">Comparar</button>
+  </div>
+  <div id="out" class="muted">Elige liga y dos equipos · resultados reales de goles y forma.</div>
+  <div class="warn">
+    <strong>Datos reales:</strong> resultados y tabla desde openfootball (GitHub).
+    Goles, PJ, forma, casa/fuera. <strong>No incluye</strong> corners, tiros ni tarjetas (eso pide API con clave).
+    Uso educativo — no es predicción ni consejo de apuestas.
+  </div>
+</main>
+<script>
+async function api(path){
+  const r = await fetch(path);
+  return r.json();
+}
+function formHTML(f){
+  if(!f) return '—';
+  return '<span class="form">'+[...f].map(c=>'<span class="'+c+'">'+c+'</span>').join('')+'</span>';
+}
+function bar(la, lb, va, vb){
+  const t = (va||0)+(vb||0) || 1;
+  const pa = Math.round(100*va/t), pb = 100-pa;
+  return `<div class="bar-wrap"><div class="bar-label"><span>${la}: ${va}</span><span>${lb}: ${vb}</span></div>
+    <div class="bar"><i class="a" style="width:${pa}%"></i><i class="b" style="width:${pb}%"></i></div></div>`;
+}
+async function init(){
+  const j = await api('/api/ligas');
+  const sel = document.getElementById('liga');
+  sel.innerHTML = (j.ligas||[]).map(l=>`<option value="${l.code}">${l.nombre} (${l.partidos_jugados} PJ)</option>`).join('');
+  sel.onchange = loadEquipos;
+  await loadEquipos();
+}
+async function loadEquipos(){
+  const code = document.getElementById('liga').value;
+  const j = await api('/api/equipos?liga='+encodeURIComponent(code));
+  const opts = (j.equipos||[]).map(e=>`<option value="${e}">${e}</option>`).join('');
+  document.getElementById('local').innerHTML = opts;
+  document.getElementById('visitante').innerHTML = opts;
+  if(j.equipos && j.equipos.length>1){
+    document.getElementById('local').selectedIndex = 0;
+    document.getElementById('visitante').selectedIndex = 1;
+  }
+}
+async function comparar(){
+  const liga = document.getElementById('liga').value;
+  const local = document.getElementById('local').value;
+  const vis = document.getElementById('visitante').value;
+  if(local===vis){document.getElementById('out').innerHTML='<p class="muted">Elige dos equipos distintos.</p>';return;}
+  const j = await api(`/api/comparar?liga=${encodeURIComponent(liga)}&local=${encodeURIComponent(local)}&visitante=${encodeURIComponent(vis)}`);
+  if(j.error){document.getElementById('out').innerHTML='<p>'+j.error+'</p>';return;}
+  document.getElementById('fuente').textContent = j.fuente || '';
+  const A=j.local, B=j.visitante;
+  let h2h = (j.h2h||[]).map(m=>`<div class="h2h">${m.date||''} · ${m.team1} ${m.score_ft[0]}-${m.score_ft[1]} ${m.team2}</div>`).join('') || '<span class="muted">Sin H2H en temporada</span>';
+  document.getElementById('out').innerHTML = `
+  <div class="grid">
+    <div class="card">
+      <h2>${A.nombre}</h2>
+      <p class="muted">#${A.pos} · ${A.pts} pts · forma ${formHTML(A.form)}</p>
+      <div class="stat"><span>PJ</span><strong>${A.pj}</strong></div>
+      <div class="stat"><span>W-D-L</span><strong>${A.w}-${A.d}-${A.l}</strong></div>
+      <div class="stat"><span>Goles a favor / contra</span><strong>${A.gf} / ${A.gc}</strong></div>
+      <div class="stat"><span>GF / GC por partido</span><strong>${A.gf_pg} / ${A.gc_pg}</strong></div>
+      <div class="stat"><span>Casa</span><strong>${A.home.w}W-${A.home.d}D-${A.home.l}L (${A.home.gf}:${A.home.gc})</strong></div>
+    </div>
+    <div class="card">
+      <h2>${B.nombre}</h2>
+      <p class="muted">#${B.pos} · ${B.pts} pts · forma ${formHTML(B.form)}</p>
+      <div class="stat"><span>PJ</span><strong>${B.pj}</strong></div>
+      <div class="stat"><span>W-D-L</span><strong>${B.w}-${B.d}-${B.l}</strong></div>
+      <div class="stat"><span>Goles a favor / contra</span><strong>${B.gf} / ${B.gc}</strong></div>
+      <div class="stat"><span>GF / GC por partido</span><strong>${B.gf_pg} / ${B.gc_pg}</strong></div>
+      <div class="stat"><span>Fuera</span><strong>${B.away.w}W-${B.away.d}D-${B.away.l}L (${B.away.gf}:${B.away.gc})</strong></div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <h2>Comparativa de ataque / defensa</h2>
+    ${bar('GF/partido '+A.nombre, B.nombre, A.gf_pg, B.gf_pg)}
+    ${bar('GC/partido '+A.nombre+' (menos=mejor)', B.nombre, A.gc_pg, B.gc_pg)}
+    ${bar('Puntos', '', A.pts, B.pts)}
+  </div>
+  <div class="card" style="margin-top:12px">
+    <h2>Cara a cara (esta temporada)</h2>
+    ${h2h}
+  </div>
+  <div class="card notes" style="margin-top:12px">
+    <h2>Lectura automática</h2>
+    <ul>${(j.notas||[]).map(n=>'<li>'+n+'</li>').join('')||'<li>Sin desequilibrios claros en promedios.</li>'}</ul>
+    <p class="muted" style="margin-top:8px">${j.aviso||''}</p>
+  </div>`;
+}
+init();
+</script>
+</body>
+</html>
