@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Scout Deportes — analizador con datos REALES (openfootball).
-Fútbol: Premier, La Liga, Bundesliga, Serie A, Ligue 1.
-Uso educativo. No predice resultados ni es consejo de apuestas.
+"""Scout Deportes — datos reales + modelo Poisson + RSS.
+Uso educativo. No es consejo de apuestas.
 """
 import json
 import urllib.request
@@ -10,6 +9,9 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
+
+from modelo import analizar_partido
+from rss_news import fetch_news, news_for_teams
 
 DIR = Path(__file__).resolve().parent
 DATOS = DIR / "datos" / "ligas_reales.json"
@@ -22,7 +24,6 @@ LEAGUES = {
     "it.1": "Serie A",
     "fr.1": "Ligue 1",
 }
-
 CACHE = None
 
 
@@ -41,7 +42,7 @@ def parse_ft(score):
 def build_league(code: str) -> dict:
     name = LEAGUES[code]
     url = f"https://raw.githubusercontent.com/openfootball/football.json/master/{SEASON}/{code}.json"
-    req = urllib.request.Request(url, headers={"User-Agent": "ScoutDeportes/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "ScoutDeportes/1.1"})
     with urllib.request.urlopen(req, timeout=25) as r:
         d = json.loads(r.read().decode())
     matches = d.get("matches") or []
@@ -55,10 +56,8 @@ def build_league(code: str) -> dict:
     for m in matches:
         ft = parse_ft(m.get("score"))
         rec = {
-            "round": m.get("round"),
-            "date": m.get("date"),
-            "team1": m.get("team1"),
-            "team2": m.get("team2"),
+            "round": m.get("round"), "date": m.get("date"),
+            "team1": m.get("team1"), "team2": m.get("team2"),
             "score_ft": list(ft) if ft else None,
         }
         finished.append(rec)
@@ -90,7 +89,6 @@ def build_league(code: str) -> dict:
                 side["d"] += 1
             else:
                 side["l"] += 1
-
     teams = {}
     for team, s in stats.items():
         pts = s["w"] * 3 + s["d"]
@@ -108,21 +106,15 @@ def build_league(code: str) -> dict:
     for i, t in enumerate(table, 1):
         teams[t["nombre"]]["pos"] = i
         t["pos"] = i
-
     return {
-        "liga": name,
-        "season": SEASON,
-        "code": code,
-        "fuente": f"openfootball · {SEASON}/{code}.json (datos reales de resultados)",
+        "liga": name, "season": SEASON, "code": code,
+        "fuente": f"openfootball · {SEASON}/{code}.json",
         "actualizado": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         "partidos_jugados": sum(1 for m in finished if m["score_ft"]),
         "partidos_total": len(matches),
         "equipos": teams,
-        "tabla": [
-            {"pos": t["pos"], "nombre": t["nombre"], "pj": t["pj"], "pts": t["pts"],
-             "gf": t["gf"], "gc": t["gc"], "gd": t["gd"], "form": t["form"]}
-            for t in table
-        ],
+        "tabla": [{"pos": t["pos"], "nombre": t["nombre"], "pj": t["pj"], "pts": t["pts"],
+                   "gf": t["gf"], "gc": t["gc"], "gd": t["gd"], "form": t["form"]} for t in table],
         "partidos": finished,
     }
 
@@ -140,7 +132,6 @@ def load_all(force=False):
             print(f"  FAIL {code}: {e}")
     if not data and DATOS.exists():
         data = json.loads(DATOS.read_text(encoding="utf-8"))
-        print("  Usando caché en disco")
     CACHE = data
     if data:
         DATOS.parent.mkdir(parents=True, exist_ok=True)
@@ -153,8 +144,7 @@ def h2h(partidos, t1, t2, limit=10):
     for m in reversed(partidos):
         if not m.get("score_ft"):
             continue
-        a, b = m["team1"], m["team2"]
-        if {a, b} == {t1, t2}:
+        if {m["team1"], m["team2"]} == {t1, t2}:
             out.append(m)
             if len(out) >= limit:
                 break
@@ -186,19 +176,24 @@ def comparar(liga_code, local, visitante):
         aw = b["away"]["w"] / b["away"]["pj"] * 100
         notes.append(f"{visitante} fuera: {b['away']['w']}W-{b['away']['d']}D-{b['away']['l']}L ({aw:.0f}% victorias).")
 
+    pred = analizar_partido(a, b)
+    try:
+        noticias = news_for_teams([local, visitante], limit=6)
+    except Exception:
+        noticias = []
+
     return {
-        "liga": L["liga"],
-        "season": L["season"],
-        "fuente": L["fuente"],
+        "liga": L["liga"], "season": L["season"], "fuente": L["fuente"],
         "actualizado": L.get("actualizado"),
-        "local": a,
-        "visitante": b,
+        "local": a, "visitante": b,
         "h2h": h2h(L["partidos"], local, visitante),
         "notas": notes,
+        "prediccion": pred,
+        "noticias": noticias,
         "aviso": (
-            "Datos reales de resultados (goles). "
-            "Corners, tiros, tarjetas y atajadas requieren otra API (p. ej. API-Football con clave free). "
-            "No es predicción ni consejo de apuestas."
+            "Datos reales (goles) + modelo Poisson educativo. "
+            "RSS = noticias, no stats de corners/tiros. "
+            "No es consejo de apuestas ni ganador garantizado."
         ),
     }
 
@@ -224,22 +219,10 @@ class Handler(SimpleHTTPRequestHandler):
         qs = parse_qs(u.query)
         if u.path == "/api/ligas":
             data = load_all()
-            self._json(200, {
-                "ligas": [
-                    {"code": c, "nombre": LEAGUES[c], "equipos": len(data[c]["equipos"]),
-                     "partidos_jugados": data[c]["partidos_jugados"]}
-                    for c in data
-                ],
-                "fuente": "openfootball/football.json",
-            })
-            return
-        if u.path == "/api/tabla":
-            code = (qs.get("liga") or ["en.1"])[0]
-            data = load_all()
-            if code not in data:
-                return self._json(404, {"error": "liga"})
-            L = data[code]
-            self._json(200, {"liga": L["liga"], "tabla": L["tabla"], "fuente": L["fuente"]})
+            self._json(200, {"ligas": [
+                {"code": c, "nombre": LEAGUES[c], "equipos": len(data[c]["equipos"]),
+                 "partidos_jugados": data[c]["partidos_jugados"]} for c in data
+            ], "fuente": "openfootball"})
             return
         if u.path == "/api/equipos":
             code = (qs.get("liga") or ["en.1"])[0]
@@ -253,6 +236,12 @@ class Handler(SimpleHTTPRequestHandler):
             local = (qs.get("local") or [""])[0]
             vis = (qs.get("visitante") or [""])[0]
             return self._json(200, comparar(code, local, vis))
+        if u.path == "/api/noticias":
+            try:
+                items = fetch_news(int((qs.get("n") or ["12"])[0]))
+            except Exception as e:
+                return self._json(502, {"error": str(e)})
+            return self._json(200, {"noticias": items})
         if u.path == "/api/refresh":
             load_all(force=True)
             return self._json(200, {"ok": True})
@@ -268,13 +257,10 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     print("=" * 56)
-    print("  SCOUT DEPORTES · datos REALES (openfootball)")
+    print("  SCOUT · reales + Poisson + RSS")
     print("=" * 56)
-    print("  Cargando ligas…")
     load_all(force=True)
-    print(f"  Abre http://127.0.0.1:{PORT}")
-    print("  Ctrl+C para detener")
-    print("=" * 56)
+    print(f"  http://127.0.0.1:{PORT}")
     HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 
